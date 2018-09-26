@@ -1,66 +1,140 @@
 #define WIN32_LEAN_AND_MEAN
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
-#include <stdio.h>
 #include <Windows.h>
 #include <WinSock2.h>
-//#pragma comment(lib,"ws2_32.lib")  
-struct DataPackage
+#include <stdio.h>
+
+enum Cmd
 {
-	char name[32];
-	int age;
+	CMD_LOGIN,
+	CMD_LOGIN_RESULT,
+	CMD_LOGOUT,
+	CMD_LOGOUT_RESULT,
+	CMD_ERROR
 };
+struct DataHeader
+{
+	short dataLength;
+	short cmd;
+};
+struct Login:public DataHeader
+{
+	Login()
+	{
+		dataLength = sizeof(Login);
+		cmd = CMD_LOGIN;
+	}
+	char name[32];
+	char password[32];
+};
+struct LoginResult:public DataHeader
+{
+	LoginResult()
+	{
+		dataLength = sizeof(LoginResult);
+		cmd = CMD_LOGIN_RESULT;
+		result = 0;
+	}
+	int result;
+};
+struct Logout:public DataHeader
+{
+	Logout()
+	{
+		dataLength = sizeof(Logout);
+		cmd = CMD_LOGOUT;
+	}
+	char name[32];
+};
+struct LogoutResult:public DataHeader
+{
+	LogoutResult()
+	{
+		dataLength = sizeof(LogoutResult);
+		cmd = CMD_LOGOUT_RESULT;
+		result = 0;
+	}
+	int result;
+};
+//#pragma comment(lib,"ws2_32.lib")  
 int main()
 {
 	WORD ver = MAKEWORD(2, 2);
 	WSADATA data;
 	WSAStartup(ver, &data);
-	SOCKET serverSock = socket(AF_INET, SOCK_STREAM, 0);
-	if (SOCKET_ERROR == serverSock)
+	sockaddr_in _sin = {};
+	SOCKET _sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	_sin.sin_family = AF_INET;
+	_sin.sin_port = htons(4567);
+	_sin.sin_addr.S_un.S_addr = INADDR_ANY;
+	if (bind(_sock, (sockaddr*)&_sin, sizeof(_sin)) == SOCKET_ERROR)
 	{
-		printf("create socket failed\n");
+		printf("bind socket error\n");
 	}
 	else
 	{
-		printf("create socket success\n");
+		printf("bind socket success\n");
 	}
-	sockaddr_in _sin = {};
-	_sin.sin_family = AF_INET;
-	_sin.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-	_sin.sin_port = htons(4567);
-	//connect
-	int ret = connect(serverSock, (sockaddr*)(&_sin), sizeof(sockaddr_in));
-	if (SOCKET_ERROR == ret)
+	if (SOCKET_ERROR == listen(_sock, 5))
 	{
-		printf("connect fail\n");
+		printf("listen socket error\n");
 	}
-	//recive
+	sockaddr_in clientAddr = {};
+	int clientAddrLen = sizeof(sockaddr_in);
+	SOCKET clientSock = INVALID_SOCKET;
+	//接收请求
+	clientSock = accept(_sock, (sockaddr*)&clientAddr, &clientAddrLen);
+	if (INVALID_SOCKET == clientSock)
+	{
+		printf("accept error\n");
+	}
+	printf("clientaddr:%s\n", inet_ntoa(clientAddr.sin_addr));
+	char recvBuf[256] = {};
 	while (1)
 	{
-		char cmdBuf[128] = {};
-		scanf("%s", cmdBuf);
-		if (0 == strcmp(cmdBuf, "exit"))
+		DataHeader dataHeader = {};
+		int recvLen = recv(clientSock, (char*)&dataHeader, sizeof(DataHeader), 0);
+		if (recvLen <= 0)
 		{
-			printf("exit");
+			printf("client exit\n");
 			break;
 		}
-		else
+		printf("CMD:%d length:%d\n", dataHeader.cmd, dataHeader.dataLength);
+		switch (dataHeader.cmd)
 		{
-			send(serverSock, cmdBuf, strlen(cmdBuf) + 1, 0);
-		}
-		char recvBuf[256] = {};
-		int revLen = 0;
-		revLen = recv(serverSock, recvBuf, 256, 0);
-		if (revLen > 0)
+		case CMD_LOGIN:
 		{
-			DataPackage *dp = (DataPackage *)recvBuf;
-			printf("recive : name:%s  age:%d\n", dp->name, dp->age);
+			//忽略用户名 密码验证;
+			Login login = {};
+			recv(clientSock, (char*)&login+ sizeof(DataHeader), sizeof(login)- sizeof(DataHeader), 0);
+			printf("CMD_LOGIN length:%d username:%s password:%s\n", login.dataLength,login.name,login.password);
+			LoginResult ret;
+			send(clientSock, (char*)&ret, sizeof(LoginResult), 0);
+			break;
 		}
+		case CMD_LOGOUT:
+		{
+			Logout logout = {};
+			recv(clientSock, (char*)&logout + sizeof(DataHeader), sizeof(Logout)- sizeof(DataHeader), 0);
+			//忽略用户名验证;
+			printf("CMD_LOGIN length:%d username:%s\n", logout.dataLength, logout.name);
+			LoginResult ret;
+			send(clientSock, (char*)&ret, sizeof(LogoutResult), 0);
+			break;
+		}
+		default:
+			dataHeader.cmd = CMD_ERROR;
+			dataHeader.dataLength = 0;
+			send(clientSock, (char*)&dataHeader, sizeof(DataHeader), 0);
+			break;
+
+		}
+
 	}
-	closesocket(serverSock);
-	WSACleanup();
+	closesocket(_sock);
 	printf("close socket\n");
+	WSAStartup(ver, &data);
+	WSACleanup();
 	getchar();
 	return 0;
-
 }
